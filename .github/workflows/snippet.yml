@@ -1,27 +1,58 @@
-name: Daily Snippet Auto Upload
+name: Daily Snippet Uploader
 
 on:
+  push:
+    paths:
+      - 'snippets/**'
   schedule:
-    - cron: "0 0 * * *"   # 매일 UTC 0시 실행 (한국시간 09시)
-  workflow_dispatch:       # 필요 시 수동 실행 버튼도 추가
+    - cron: '0 0 * * *'    # 매일 UTC 00:00 = KST 09:00
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '업로드할 날짜 (YYYY-MM-DD, 비우면 오늘 날짜)'
+        required: false
+      content:
+        description: '직접 작성할 스니펫 내용'
+        required: false
 
 jobs:
   upload:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Send Daily Snippet
+      - name: Pick date & content
+        id: pick
         run: |
-          DATE=$(date -d '+9 hour' +%F)   # 한국 시간 기준 YYYY-MM-DD
-          CONTENT="오늘의 Snippet 자동 업로드 테스트"
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            DATE="${{ github.event.inputs.date }}"
+          else
+            DATE=$(date -u -d '+9 hour' +%F)  # 한국시간 오늘
+          fi
+          echo "date=$DATE" >> $GITHUB_OUTPUT
 
-          curl -X POST "$DAILY_SNIPPET_API_URL" \
-            -H "Authorization: Bearer $DAILY_SNIPPET_API_TOKEN" \
+          if [ -n "${{ github.event.inputs.content }}" ]; then
+            CONTENT="${{ github.event.inputs.content }}"
+          else
+            FILE="snippets/${DATE}.md"
+            if [ -f "$FILE" ]; then
+              CONTENT=$(sed ':a;N;$!ba;s/\r//g;s/\n/\\n/g' "$FILE")
+            else
+              CONTENT="(자동 업로드) ${DATE} Snippet 파일이 없음"
+            fi
+          fi
+          echo "content=$CONTENT" >> $GITHUB_OUTPUT
+
+      - name: Upload to Daily Snippet API
+        run: |
+          curl -sS -w "\nHTTP_CODE:%{http_code}\n" -X POST "https://daily.1000.school/api/snippet" \
+            -H "Authorization: Bearer ${{ secrets.DAILY_SNIPPET_API_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"date\":\"$DATE\",\"content\":\"$CONTENT\"}"
-        env:
-          DAILY_SNIPPET_API_URL: ${{ secrets.DAILY_SNIPPET_API_URL }}
-          DAILY_SNIPPET_API_TOKEN: ${{ secrets.DAILY_SNIPPET_API_TOKEN }}
+            -d "{\"date\":\"${{ steps.pick.outputs.date }}\",\"content\":\"${{ steps.pick.outputs.content }}\"}" | tee response.log
+          CODE=$(grep HTTP_CODE response.log | cut -d: -f2)
+          if [ "$CODE" -lt 200 ] || [ "$CODE" -ge 300 ]; then
+            echo "❌ 업로드 실패 (HTTP $CODE)"
+            exit 1
+          fi
+          echo "✅ 업로드 성공 (HTTP $CODE)"
