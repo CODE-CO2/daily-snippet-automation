@@ -10,7 +10,7 @@ const SNIPPETS_DIR = path.join(ROOT, "snippets");
 // 팀원 폴더명 → 이메일 매핑
 const EMAIL_MAP = {
   jieun: "jieun@example.com",  // 장지은(ENTJ) - 마케팅
-  eunho: "eunho@example.com",  // 정은호(ISTJ) - 백엔드
+  eunho: "jeh0224@gachon.ac.kr",  // 정은호(ISTJ) - 백엔드
   siwan: "siwan@example.com",  // 김시완(ENTP) - 프론트엔드
   gyubi: "gyubi@example.com"   // 이규비(INFJ) - 올라운더
 };
