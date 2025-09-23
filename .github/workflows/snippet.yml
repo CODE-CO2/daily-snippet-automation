@@ -1,57 +1,148 @@
-name: Daily Snippet Uploader
+name: Daily Snippet Auto Upload
 
 on:
   push:
     paths:
       - 'snippets/**'
   schedule:
-    - cron: '0 0 * * *'    # 매일 UTC 00:00 = KST 09:00
+    - cron: '0 0 * * *' # 매일 UTC 00:00 = KST 09:00
   workflow_dispatch:
     inputs:
       date:
-        description: '업로드할 날짜 (YYYY-MM-DD, 비우면 오늘 날짜)'
+        description: '업로드 날짜 (YYYY-MM-DD, 비우면 오늘[KST])'
+        required: false
+      handle:
+        description: '수동 업로드: 파일 대신 이 핸들로 업로드 (users.env 매핑 필요)'
         required: false
       content:
-        description: '직접 작성할 스니펫 내용'
+        description: '수동 업로드: 이 내용으로 업로드 (handle과 함께 사용)'
         required: false
+
+env:
+  TEAM_NAME: ${{ vars.TEAM_NAME || 'CODE&CO' }}
 
 jobs:
   upload:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Pick date & content
-        id: pick
+      - name: Ensure users mapping file exists
+        run: |
+          if [ ! -f ".github/snippet-users.env" ]; then
+            echo "::warning:: .github/snippet-users.env 파일이 없어 예시를 생성합니다."
+            cat > .github/snippet-users.env <<'EOF'
+# 예시) 핸들=이메일
+# eunho=jeh0224@gachon.ac.kr
+# siwan=siwan@example.com
+# gyubi=gyubi@example.com
+EOF
+          fi
+
+      - name: Resolve date (KST)
+        id: when
         run: |
           if [ -n "${{ github.event.inputs.date }}" ]; then
             DATE="${{ github.event.inputs.date }}"
           else
-            DATE=$(date -u -d '+9 hour' +%F)  # 한국시간 오늘
+            DATE=$(date -u -d '+9 hour' +%F) # KST 오늘
           fi
           echo "date=$DATE" >> $GITHUB_OUTPUT
+          echo "Using date: $DATE"
 
-          if [ -n "${{ github.event.inputs.content }}" ]; then
-            CONTENT="${{ github.event.inputs.content }}"
-          else
-            FILE="snippets/${DATE}.md"
-            if [ -f "$FILE" ]; then
-              CONTENT=$(sed ':a;N;$!ba;s/\r//g;s/\n/\\n/g' "$FILE")
-            else
-              CONTENT="(자동 업로드) ${DATE} Snippet 파일이 없음"
-            fi
-          fi
-          echo "content=$CONTENT" >> $GITHUB_OUTPUT
-
-      - name: Upload to Daily Snippet API (Debug)
+      - name: Upload by manual inputs (optional single upload)
+        if: ${{ github.event.inputs.handle != '' && github.event.inputs.content != '' }}
+        env:
+          SUPABASE_ENDPOINT: ${{ secrets.SUPABASE_ENDPOINT }}
+          SUPABASE_APIKEY:   ${{ secrets.SUPABASE_APIKEY }}
+          SUPABASE_AUTH:     ${{ secrets.SUPABASE_AUTH }}
+          DATE:              ${{ steps.when.outputs.date }}
         run: |
-          echo "📡 업로드 요청 시작..."
-          curl -v -X POST "https://daily.1000.school/api/snippet" \
-            -H "Authorization: Bearer ${{ secrets.DAILY_SNIPPET_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"date\":\"${{ steps.pick.outputs.date }}\",\"content\":\"${{ steps.pick.outputs.content }}\"}" \
-            -o response.json -w "\nHTTP_CODE:%{http_code}\n"
+          set -e
+          source ".github/snippet-users.env"
 
-          echo "📄 서버 응답 본문:"
-          cat response.json || true
+          HANDLE_RAW="${{ github.event.inputs.handle }}"
+          # 변수를 안전하게 참조 (handle을 변수명으로 사용)
+          # 예: eunho=gmail@... 으로 되어 있다면 ${eunho} 로 접근
+          VAR_NAME=$(echo "$HANDLE_RAW" | sed 's/[^a-zA-Z0-9_]/_/g')
+          EMAIL=$(eval "echo \${$VAR_NAME}")
+
+          if [ -z "$EMAIL" ]; then
+            echo "::error:: handle '${HANDLE_RAW}'에 대한 이메일을 .github/snippet-users.env에서 찾지 못했습니다."
+            exit 1
+          fi
+
+          CONTENT="${{ github.event.inputs.content }}"
+          CONTENT_ESCAPED=$(printf "%s" "$CONTENT" | sed ':a;N;$!ba;s/\r//g;s/\n/\\n/g')
+
+          echo "POST -> $EMAIL ($DATE)"
+          RESP=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" -X POST "$SUPABASE_ENDPOINT" \
+            -H "apikey: $SUPABASE_APIKEY" \
+            -H "Authorization: $SUPABASE_AUTH" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=representation" \
+            -d "{\"snippet_date\":\"$DATE\",\"content\":\"$CONTENT_ESCAPED\",\"user_email\":\"$EMAIL\",\"team_name\":\"${TEAM_NAME}\"}")
+          echo "$RESP" | tee response_single.log
+          CODE=$(echo "$RESP" | awk -F: '/HTTP_CODE/ {print $2}')
+          if [ "$CODE" -lt 200 ] || [ "$CODE" -ge 300 ]; then
+            echo "::error:: 업로드 실패 (HTTP $CODE)"
+            exit 1
+          fi
+          echo "✅ 수동 업로드 성공 (HTTP $CODE)"
+
+      - name: Upload all snippet files for the date
+        if: ${{ !(github.event.inputs.handle != '' && github.event.inputs.content != '') }}
+        env:
+          SUPABASE_ENDPOINT: ${{ secrets.SUPABASE_ENDPOINT }}
+          SUPABASE_APIKEY:   ${{ secrets.SUPABASE_APIKEY }}
+          SUPABASE_AUTH:     ${{ secrets.SUPABASE_AUTH }}
+          DATE:              ${{ steps.when.outputs.date }}
+        run: |
+          set -e
+          source ".github/snippet-users.env"
+
+          PATTERN="snippets/${DATE}_*.md"
+          FILES=$(ls $PATTERN 2>/dev/null || true)
+
+          if [ -z "$FILES" ]; then
+            echo "::notice:: ${PATTERN} 패턴의 파일이 없습니다. (업로드 생략)"
+            exit 0
+          fi
+
+          FAIL=0
+          for FILE in $FILES; do
+            BASENAME=$(basename "$FILE" .md)
+            HANDLE_RAW="${BASENAME#${DATE}_}"         # YYYY-MM-DD_ 뒤의 handle
+            VAR_NAME=$(echo "$HANDLE_RAW" | sed 's/[^a-zA-Z0-9_]/_/g')
+
+            EMAIL=$(eval "echo \${$VAR_NAME}")
+            if [ -z "$EMAIL" ]; then
+              echo "::warning:: handle '${HANDLE_RAW}'에 대한 이메일을 .github/snippet-users.env에서 찾지 못해 스킵합니다."
+              continue
+            fi
+
+            CONTENT=$(cat "$FILE")
+            CONTENT_ESCAPED=$(printf "%s" "$CONTENT" | sed ':a;N;$!ba;s/\r//g;s/\n/\\n/g')
+
+            echo "POST -> $EMAIL ($DATE) from $FILE"
+            RESP=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" -X POST "$SUPABASE_ENDPOINT" \
+              -H "apikey: $SUPABASE_APIKEY" \
+              -H "Authorization: $SUPABASE_AUTH" \
+              -H "Content-Type: application/json" \
+              -H "Prefer: return=representation" \
+              -d "{\"snippet_date\":\"$DATE\",\"content\":\"$CONTENT_ESCAPED\",\"user_email\":\"$EMAIL\",\"team_name\":\"${TEAM_NAME}\"}")
+            echo "$RESP" | tee "response_${HANDLE_RAW}.log"
+            CODE=$(echo "$RESP" | awk -F: '/HTTP_CODE/ {print $2}')
+            if [ "$CODE" -lt 200 ] || [ "$CODE" -ge 300 ]; then
+              echo "::error:: ${HANDLE_RAW} 업로드 실패 (HTTP $CODE)"
+              FAIL=1
+            else
+              echo "✅ ${HANDLE_RAW} 업로드 성공 (HTTP $CODE)"
+            fi
+          done
+
+          if [ "$FAIL" -ne 0 ]; then
+            exit 1
+          fi
