@@ -44,15 +44,14 @@ jobs:
           fi
           echo "content=$CONTENT" >> $GITHUB_OUTPUT
 
-      - name: Upload to Daily Snippet API
+      - name: Upload to Daily Snippet API (Debug)
         run: |
-          curl -sS -w "\nHTTP_CODE:%{http_code}\n" -X POST "https://daily.1000.school/api/snippet" \
+          echo "📡 업로드 요청 시작..."
+          curl -v -X POST "https://daily.1000.school/api/snippet" \
             -H "Authorization: Bearer ${{ secrets.DAILY_SNIPPET_API_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"date\":\"${{ steps.pick.outputs.date }}\",\"content\":\"${{ steps.pick.outputs.content }}\"}" | tee response.log
-          CODE=$(grep HTTP_CODE response.log | cut -d: -f2)
-          if [ "$CODE" -lt 200 ] || [ "$CODE" -ge 300 ]; then
-            echo "❌ 업로드 실패 (HTTP $CODE)"
-            exit 1
-          fi
-          echo "✅ 업로드 성공 (HTTP $CODE)"
+            -d "{\"date\":\"${{ steps.pick.outputs.date }}\",\"content\":\"${{ steps.pick.outputs.content }}\"}" \
+            -o response.json -w "\nHTTP_CODE:%{http_code}\n"
+
+          echo "📄 서버 응답 본문:"
+          cat response.json || true
