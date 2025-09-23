@@ -1,0 +1,27 @@
+name: Daily Snippet Auto Upload
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # 매일 UTC 0시 실행 (한국시간 09시)
+  workflow_dispatch:       # 필요 시 수동 실행 버튼도 추가
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Send Daily Snippet
+        run: |
+          DATE=$(date -d '+9 hour' +%F)   # 한국 시간 기준 YYYY-MM-DD
+          CONTENT="오늘의 Snippet 자동 업로드 테스트"
+
+          curl -X POST "$DAILY_SNIPPET_API_URL" \
+            -H "Authorization: Bearer $DAILY_SNIPPET_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"date\":\"$DATE\",\"content\":\"$CONTENT\"}"
+        env:
+          DAILY_SNIPPET_API_URL: ${{ secrets.DAILY_SNIPPET_API_URL }}
+          DAILY_SNIPPET_API_TOKEN: ${{ secrets.DAILY_SNIPPET_API_TOKEN }}
