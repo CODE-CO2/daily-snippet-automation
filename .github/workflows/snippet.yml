@@ -1,22 +1,27 @@
-- name: Send Daily Snippet
-  env:
-    DAILY_SNIPPET_API_URL: ${{ secrets.DAILY_SNIPPET_API_URL }}
-    DAILY_SNIPPET_API_TOKEN: ${{ secrets.DAILY_SNIPPET_API_TOKEN }}
-  run: |
-    set -euo pipefail
-    echo "URL=[$DAILY_SNIPPET_API_URL]"
-    if [ -z "${DAILY_SNIPPET_API_URL:-}" ]; then echo "❌ URL empty"; exit 1; fi
+name: Upload Daily Snippets
+on:
+  push:
+    paths:
+      - "snippets/**"
 
-    DATE=$(date -u +%FT%TZ)
-    BODY=$(jq -nc \
-      --arg email "jeh0224@gachon.ac.kr" \
-      --arg content "자동 업로드 테스트" \
-      --arg created "$DATE" \
-      --arg title "smoke-$DATE" \
-      '{author_email:$email,content:$content,created_at:$created,source:"github",title:$title}')
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    curl -sS -X POST "$DAILY_SNIPPET_API_URL" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $DAILY_SNIPPET_API_TOKEN" \
-      -H "apikey: $DAILY_SNIPPET_API_TOKEN" \
-      --data "$BODY"
+      - name: Setup Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Init npm
+        run: |
+          npm init -y >/dev/null 2>&1 || true
+
+      - name: Run uploader
+        env:
+          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
+          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}
+        run: node scripts/upload-snippets.js
