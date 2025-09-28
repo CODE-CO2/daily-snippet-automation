@@ -1,57 +1,26 @@
-name: Upload Daily Snippets
+name: Probe Daily Snippet API (user attribution)
+
 on:
+  workflow_dispatch: {}   # 수동 실행
   push:
     paths:
       - "snippets/**"
 
 jobs:
-  upload:
+  probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node 18
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "18"
 
-      - name: Show repo tree (snippets)
-        run: |
-          echo "::group::tree snippets"
-          ls -alR snippets || true
-          echo "::endgroup::"
+      - name: Ensure npm
+        run: npm init -y >/dev/null 2>&1 || true
 
-      # ✅ n8n 웹훅으로 직접 1건 보내보기 (파이프라인 정상 여부 확인)
-      - name: Smoke test to n8n
+      - name: Run probe
         env:
           DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}
-        run: |
-          set -euo pipefail
-          echo "URL=[$DAILY_SNIPPET_URL]"
-          if [ -z "${DAILY_SNIPPET_URL:-}" ]; then echo "❌ URL empty"; exit 1; fi
-
-          NOW=$(date -u +%FT%TZ)
-          BODY=$(jq -nc \
-            --arg email "jeh0224@gachon.ac.kr" \
-            --arg content "n8n smoke test from Actions ($NOW)" \
-            --arg created "$NOW" \
-            --arg title "smoke-$NOW" \
-            '{author_email:$email,content:$content,created_at:$created,source:"github",title:$title}')
-
-          echo "::group::POST n8n"
-          echo "$BODY"
-          curl -i -sS -X POST "$DAILY_SNIPPET_URL" \
-            -H "Content-Type: application/json" \
-            --data "$BODY"
-          echo "::endgroup::"
-
-      # 실제 업로더 실행
-      - name: Init npm
-        run: |
-          npm init -y >/dev/null 2>&1 || true
-
-      - name: Run uploader
-        env:
-          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}   # n8n 웹훅
-        run: node scripts/upload-snippets.js
+          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
+        run: node scripts/probe-snippet.js
