@@ -1,0 +1,26 @@
+name: Probe Daily Snippet API (user attribution)
+
+on:
+  workflow_dispatch: {}   # 수동 실행
+  push:
+    paths:
+      - "snippets/**"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Ensure npm
+        run: npm init -y >/dev/null 2>&1 || true
+
+      - name: Run probe
+        env:
+          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}
+          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
+        run: node scripts/probe-snippet.js
