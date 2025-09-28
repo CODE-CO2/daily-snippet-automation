@@ -18,9 +18,9 @@ const SNIPPETS_DIR = path.join(ROOT, "snippets");
 // 폴더명 ↔ 실제 이메일
 const EMAIL_MAP = {
   eunho: "jeh0224@gachon.ac.kr",
-  jieun: "jieun@example.com",
+  jieun: "wldms4849@gachon.ac.kr",
   siwan: "siwan@example.com",
-  gyubi: "gyubi@example.com",
+  gyubi: "guebi1220@gachon.ac.kr",
 };
 
 function ymdFromFilename(name){ const m=name.match(/(\d{4}-\d{2}-\d{2})/); return m?m[1]:null; }
