@@ -15,7 +15,7 @@ const EMAIL_MAP = {
   gyubi: "gyubi@example.com"   // 이규비(INFJ) - 올라운더
 };
 
-const API_URL = process.env.DS_ENDPOINT || "https://gqfegtdjewnadcmksktg.supabase.co/rest/v1/snippets";
+const API_URL = process.env.DS_ENDPOINT || "https://n8n.1000.school/webhook/0a43fbad-cc6d-4a5f-8727-b387c27de7c8";
 const API_KEY = process.env.DAILY_SNIPPET_API_KEY;
 
 if (!API_KEY) {
