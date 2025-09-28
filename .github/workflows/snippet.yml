@@ -2,12 +2,11 @@ name: Upload Daily Snippets
 on:
   push:
     paths:
-      - "snippets/**"   # snippets 폴더 변경시에만 실행
+      - "snippets/**"
 
 jobs:
   upload:
     runs-on: ubuntu-latest
-    # (선택) 동일 브랜치에서 중복 실행 방지
     concurrency:
       group: snippets-${{ github.ref }}
       cancel-in-progress: false
@@ -15,18 +14,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node.js
+      - name: Setup Node 18
         uses: actions/setup-node@v4
         with:
           node-version: "18"
 
-      - name: Install deps
+      - name: Init npm (no extra deps)
         run: |
           npm init -y >/dev/null 2>&1 || true
-          npm install node-fetch@3
 
       - name: Run uploader
         env:
+          # n8n 사용 중이면 키 필요 없으면 아래 줄 제거 가능
           DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
           DS_ENDPOINT: "https://n8n.1000.school/webhook/0a43fbad-cc6d-4a5f-8727-b387c27de7c8"
+          # (Supabase 직접일 때는 위 URL을 Supabase REST URL로 교체)
         run: node scripts/upload-snippets.js
