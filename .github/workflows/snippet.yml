@@ -28,4 +28,5 @@ jobs:
       - name: Run uploader
         env:
           DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
+          DS_ENDPOINT: ${{https://n8n.1000.school/webhook/0a43fbad-cc6d-4a5f-8727-b387c27de7c8}}
         run: node scripts/upload-snippets.js
