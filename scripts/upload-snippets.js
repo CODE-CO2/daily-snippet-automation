@@ -1,9 +1,10 @@
 // scripts/upload-snippets.js
-// 팀 단일 API로 인증하면서, 각 파일을 "해당 사용자(구글 이메일)"의 스니펫으로 귀속시켜 업로드합니다.
-// - Secrets: DAILY_SNIPPET_URL, DAILY_SNIPPET_API_KEY
-// - 선택 env: USER_ID_FIELD(기본 user_email), IMPERSONATION_HEADER(기본 X-DS-User-Email)
-// - 파일명 YYYY-MM-DD.* 이면 그 날짜를 created_at/date로 사용 (KST 00:00:00)
-// - DEBUG=1 이면 상세 로그, 후보 0/업로드 0이면 실패 코드로 종료
+// 목적: snippets/<author>/*.md|txt|markdown 을 읽어서
+// Daily Snippet API(Webhook)로 POST
+// 요구 바디: { user_email, snippet_date(YYYY-MM-DD), content, team_name? }
+//
+// 필요 시크릿: DAILY_SNIPPET_URL, DAILY_SNIPPET_API_KEY
+// 선택 ENV: TEAM_NAME (예: "7기-2팀"), DEBUG=1 (자세한 로그)
 
 const fs = require("fs");
 const path = require("path");
@@ -11,8 +12,7 @@ const { execSync } = require("child_process");
 
 const API_URL = process.env.DAILY_SNIPPET_URL;
 const API_KEY = process.env.DAILY_SNIPPET_API_KEY;
-const USER_ID_FIELD = process.env.USER_ID_FIELD || "user_email";
-const IMPERSONATION_HEADER = process.env.IMPERSONATION_HEADER || "X-DS-User-Email";
+const TEAM_NAME = process.env.TEAM_NAME || "7기-2팀";
 const DEBUG = process.env.DEBUG === "1";
 
 if (!API_URL) { console.error("❌ DAILY_SNIPPET_URL is missing"); process.exit(1); }
@@ -21,7 +21,7 @@ if (!API_KEY) { console.error("❌ DAILY_SNIPPET_API_KEY is missing"); process.e
 const ROOT = process.cwd();
 const SNIPPETS_DIR = path.join(ROOT, "snippets");
 
-// 폴더명 ↔ 실제 구글 계정 이메일 (꼭 실제 이메일로 교체하세요)
+// 🔁 폴더명 → 실제 구글 이메일로 꼭 맞춰주세요
 const EMAIL_MAP = {
   eunho: "jeh0224@gachon.ac.kr",
   jieun: "jieun@example.com",
@@ -29,36 +29,37 @@ const EMAIL_MAP = {
   gyubi: "gyubi@example.com",
 };
 
-// YYYY-MM-DD → KST ISO (00:00:00+09:00)
-function ymdToKstIso(ymd) {
-  // ymd: '2025-09-28'
-  return `${ymd}T00:00:00+09:00`;
-}
-
-// 파일명에서 날짜 추출 (YYYY-MM-DD)
-function dateFromFilename(filename) {
-  const m = filename.match(/(\d{4}-\d{2}-\d{2})/);
+// 파일명에서 YYYY-MM-DD 추출
+function ymdFromFilename(name) {
+  const m = name.match(/(\d{4}-\d{2}-\d{2})/);
   return m ? m[1] : null;
 }
 
+// git 마지막 커밋 AuthorDate(ISO). 실패 시 null
 function gitAuthorISODate(filePath) {
   try {
     const out = execSync(`git log -1 --pretty=format:%aI -- "${filePath}"`, { encoding: "utf8" }).trim();
     return out || null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
-async function postToApi(ownerEmail, payload) {
+// ISO 문자열 → YYYY-MM-DD (단순 split)
+function isoToYmd(iso) {
+  return (iso || "").split("T")[0] || null;
+}
+
+async function postSnippet(payload) {
   const headers = {
-    "Authorization": `Bearer ${API_KEY}`,   // 팀 키 (백엔드가 요구하면 유지)
+    "Authorization": `Bearer ${API_KEY}`,
     "Content-Type": "application/json",
   };
-  if (IMPERSONATION_HEADER) headers[IMPERSONATION_HEADER] = ownerEmail; // 서버가 지원 시 유효
 
   if (DEBUG) {
-    const safeHeaders = { ...headers, Authorization: "Bearer ****" };
+    const safe = { ...headers, Authorization: "Bearer ****" };
     console.log("[DEBUG] POST", API_URL);
-    console.log("[DEBUG] HEADERS", safeHeaders);
+    console.log("[DEBUG] HEADERS", safe);
     console.log("[DEBUG] BODY", JSON.stringify(payload));
   }
 
@@ -75,86 +76,70 @@ async function postToApi(ownerEmail, payload) {
   try { return JSON.parse(text); } catch { return { ok: true, text }; }
 }
 
-function inferTitleFromName(name) {
-  const base = path.basename(name, path.extname(name));
-  return `Daily note ${base}`;
-}
-
 (async function main() {
   if (!fs.existsSync(SNIPPETS_DIR)) {
     console.error("❌ No snippets/ directory.");
     process.exit(2);
   }
 
-  let uploaded = 0;
   let candidates = 0;
+  let uploaded = 0;
 
   const authors = fs.readdirSync(SNIPPETS_DIR, { withFileTypes: true })
     .filter(d => d.isDirectory())
     .map(d => d.name);
 
-  if (DEBUG) console.log("[DEBUG] author dirs:", authors);
+  if (DEBUG) console.log("[DEBUG] authors:", authors);
 
-  for (const authorDir of authors) {
-    const ownerEmail = EMAIL_MAP[authorDir];
-    if (!ownerEmail) {
-      console.warn(`⚠️ Skip: unknown author dir "${authorDir}" (EMAIL_MAP에 없음)`);
+  for (const author of authors) {
+    const userEmail = EMAIL_MAP[author];
+    if (!userEmail) {
+      console.warn(`⚠️ Skip: unknown author folder "${author}" (EMAIL_MAP에 없음)`);
       continue;
     }
 
-    const dirPath = path.join(SNIPPETS_DIR, authorDir);
+    const dirPath = path.join(SNIPPETS_DIR, author);
     const files = fs.readdirSync(dirPath, { withFileTypes: true })
       .filter(f => f.isFile())
       .map(f => f.name)
-      .filter(name => /\.(md|txt|markdown)$/i.test(name));
+      .filter(n => /\.(md|txt|markdown)$/i.test(n));
 
-    if (DEBUG) console.log("[DEBUG]", authorDir, "files:", files);
+    if (DEBUG) console.log("[DEBUG]", author, "files:", files);
 
     for (const fname of files) {
       const full = path.join(dirPath, fname);
-      const content = fs.readFileSync(full, "utf8");
+      const content = fs.readFileSync(full, "utf8").trim();
 
-      // 1) 파일명에서 날짜 우선
-      const ymd = dateFromFilename(fname);
-      let createdAt;
-      let dateField; // UI가 YYYY-MM-DD만 받는 경우 대비
-      if (ymd) {
-        createdAt = ymdToKstIso(ymd);
-        dateField = ymd;
-      } else {
-        // 2) 없으면 git author date → 최종 fallback: 지금
-        createdAt = gitAuthorISODate(full) || new Date().toISOString();
-        // dateField는 생략 가능
+      // 날짜 결정: 파일명 YYYY-MM-DD 우선 → 없으면 git author date → 없으면 오늘(UTC)
+      const fromName = ymdFromFilename(fname);
+      let snippetDate = fromName;
+      if (!snippetDate) {
+        const iso = gitAuthorISODate(full) || new Date().toISOString();
+        snippetDate = isoToYmd(iso) || new Date().toISOString().slice(0, 10);
       }
 
-      const title = inferTitleFromName(fname);
-
-      // 백엔드/앱이 어떤 키를 읽는지 불확실할 수 있어
-      // - USER_ID_FIELD(기본 user_email) + author_email 둘 다 넣어줌
+      // API가 요구하는 바디에 맞춰 매핑 (❗️배열이 아니라 '단일 객체')
       const payload = {
-        [USER_ID_FIELD]: ownerEmail,  // 예: user_email
-        author_email: ownerEmail,     // 호환용
-        title,
+        user_email: userEmail,
+        snippet_date: snippetDate, // YYYY-MM-DD
         content,
-        created_at: createdAt,        // ISO8601 (KST 또는 ISO)
-        source: "github",
+        team_name: TEAM_NAME,      // 선택 필드 (있으면 추가)
       };
-      if (dateField) payload.date = dateField; // UI가 YYYY-MM-DD만 쓸 때
 
       candidates += 1;
-      console.log(`↗️ Uploading ${authorDir}/${fname} → ${ownerEmail} @ ${createdAt}`);
+      console.log(`↗️ ${author}/${fname} → ${userEmail} @ ${snippetDate}`);
 
       try {
-        const out = await postToApi(ownerEmail, payload);
+        const out = await postSnippet(payload);
         uploaded += 1;
         console.log("✅ Uploaded:", out);
       } catch (e) {
-        console.error(`❌ Failed ${authorDir}/${fname}: ${e.message}`);
+        console.error(`❌ Failed ${author}/${fname}: ${e.message}`);
       }
     }
   }
 
   console.log(`Done. Candidates=${candidates}, Uploaded=${uploaded}.`);
-  if (candidates === 0) { console.error("❌ No candidate files under snippets/<author>/*.md|txt|markdown"); process.exit(2); }
-  if (uploaded === 0)   { console.error("❌ 0 uploads (서버에서 사용자 귀속 처리 확인 필요)"); process.exit(3); }
+  if (candidates === 0) { console.error("❌ No candidate files under snippets/<author>"); process.exit(2); }
+  if (uploaded === 0)   { console.error("❌ 0 uploads. Check API/required fields."); process.exit(3); }
 })().catch(e => { console.error(e); process.exit(1); });
