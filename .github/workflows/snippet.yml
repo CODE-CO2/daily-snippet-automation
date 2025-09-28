@@ -28,5 +28,4 @@ jobs:
       - name: Run uploader
         env:
           DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
-          DS_ENDPOINT: ${{ secrets.DS_ENDPOINT }}
         run: node scripts/upload-snippets.js
