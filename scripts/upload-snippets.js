@@ -1,3 +1,12 @@
+const DEBUG = true; // 임시로 켜기
+
+// ... for (const fname of files) 안에서:
+if (DEBUG) {
+  console.log("[DEBUG] author:", authorDir, "email:", email);
+  console.log("[DEBUG] file:", full);
+  console.log("[DEBUG] payload:", row);
+}
+
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
