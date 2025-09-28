@@ -1,59 +1,70 @@
-// scripts/upload-snippets.js
-import fs from "fs";
-import path from "path";
-import { execSync } from "child_process";
-import fetch from "node-fetch"; // Node18+는 글로벌 fetch가 있지만 호환 위해 추가
+// scripts/upload-snippets.js  (CommonJS + Node18 global fetch)
+const fs = require("fs");
+const path = require("path");
+const { execSync } = require("child_process");
 
 const ROOT = process.cwd();
 const SNIPPETS_DIR = path.join(ROOT, "snippets");
 
-// 팀원 폴더명 → 이메일 매핑
+// 팀원 폴더명 → 이메일 매핑 (필요 시 수정)
 const EMAIL_MAP = {
-  jieun: "jieun@example.com",  // 장지은(ENTJ) - 마케팅
-  eunho: "jeh0224@gachon.ac.kr",  // 정은호(ISTJ) - 백엔드
-  siwan: "siwan@example.com",  // 김시완(ENTP) - 프론트엔드
-  gyubi: "gyubi@example.com"   // 이규비(INFJ) - 올라운더
+  jieun: "jieun@example.com",
+  eunho: "jeh0224@gachon.ac.kr",
+  siwan: "siwan@example.com",
+  gyubi: "gyubi@example.com",
 };
 
-const API_URL = process.env.DS_ENDPOINT || "https://n8n.1000.school/webhook/0a43fbad-cc6d-4a5f-8727-b387c27de7c8";
-const API_KEY = process.env.DAILY_SNIPPET_API_KEY;
+// ✅ 현재는 n8n 웹훅으로 설정되어 있음 (Supabase 직접 쓸 거면 아래 URL 교체)
+const API_URL =
+  process.env.DS_ENDPOINT ||
+  "https://n8n.1000.school/webhook/0a43fbad-cc6d-4a5f-8727-b387c27de7c8";
 
-if (!API_KEY) {
-  console.error("❌ DAILY_SNIPPET_API_KEY is missing");
-  process.exit(1);
-}
+// ⚠️ n8n이면 키가 필요 없을 수도 있음. 필요 없으면 이 블록을 제거하거나 optional로 바꿔.
+// const API_KEY = process.env.DAILY_SNIPPET_API_KEY;
+// if (!API_KEY) {
+//   console.error("❌ DAILY_SNIPPET_API_KEY is missing");
+//   process.exit(1);
+// }
 
 function gitAuthorISODate(filePath) {
   try {
-    // 해당 파일의 '마지막 커밋 AuthorDate' (ISO8601, 타임존 포함)
     const cmd = `git log -1 --pretty=format:%aI -- "${filePath}"`;
     const out = execSync(cmd, { encoding: "utf8" }).trim();
-    return out || null;
+    return out || null; // e.g., 2025-09-28T11:22:33+09:00
   } catch {
     return null;
   }
 }
 
+// ✅ 응답이 JSON이든 TEXT든 빈 바디든 안전하게 처리
+async function parseResponse(res) {
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : { ok: true, empty: true };
+  } catch {
+    return { ok: true, text };
+  }
+}
+
 async function uploadSnippet(row) {
+  const headers = {
+    "Content-Type": "application/json",
+    // n8n이 헤더 검증하지 않는다면 아래 2줄은 지워도 됨
+    // "Authorization": `Bearer ${API_KEY}`,
+    // "apikey": API_KEY,
+  };
+
   const res = await fetch(API_URL, {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${API_KEY}`,
-      "apikey": API_KEY,
-      "Content-Type": "application/json",
-      "Prefer": "return=representation"
-      // (중복 방지용 업서트가 필요하면)
-      // "Prefer": "resolution=merge-duplicates"
-    },
-    // 업서트 사용 시 쿼리스트링 예: `${API_URL}?on_conflict=author_email,created_at`
-    body: JSON.stringify(row)
+    headers,
+    body: JSON.stringify(row),
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Upload failed: ${res.status} ${res.statusText}\n${text}`);
+    const body = await res.text();
+    throw new Error(`Upload failed: ${res.status} ${res.statusText}\n${body}`);
   }
-  return res.json();
+  return parseResponse(res);
 }
 
 function inferTitleFromName(name) {
@@ -61,7 +72,7 @@ function inferTitleFromName(name) {
   return `Daily note ${base}`;
 }
 
-async function main() {
+(async function main() {
   if (!fs.existsSync(SNIPPETS_DIR)) {
     console.log("No snippets/ directory. Skip.");
     return;
@@ -69,9 +80,10 @@ async function main() {
 
   let uploaded = 0;
 
-  const authors = fs.readdirSync(SNIPPETS_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory())
-    .map(d => d.name);
+  const authors = fs
+    .readdirSync(SNIPPETS_DIR, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
 
   for (const authorDir of authors) {
     const email = EMAIL_MAP[authorDir];
@@ -81,10 +93,11 @@ async function main() {
     }
 
     const dirPath = path.join(SNIPPETS_DIR, authorDir);
-    const files = fs.readdirSync(dirPath, { withFileTypes: true })
-      .filter(f => f.isFile())
-      .map(f => f.name)
-      .filter(name => /\.(md|txt|markdown)$/i.test(name));
+    const files = fs
+      .readdirSync(dirPath, { withFileTypes: true })
+      .filter((f) => f.isFile())
+      .map((f) => f.name)
+      .filter((name) => /\.(md|txt|markdown)$/i.test(name));
 
     for (const fname of files) {
       const full = path.join(dirPath, fname);
@@ -97,14 +110,14 @@ async function main() {
         content,
         created_at: createdAt,
         source: "github",
-        title
+        title,
       };
 
       console.log(`↗️ Uploading ${authorDir}/${fname} as ${email} @ ${createdAt}`);
       try {
         const out = await uploadSnippet(row);
         uploaded += 1;
-        console.log(`✅ Uploaded:`, out);
+        console.log("✅ Uploaded:", out);
       } catch (err) {
         console.error(`❌ Failed ${authorDir}/${fname}: ${err.message}`);
       }
@@ -112,9 +125,7 @@ async function main() {
   }
 
   console.log(`Done. Uploaded ${uploaded} snippet(s).`);
-}
-
-main().catch(e => {
+})().catch((e) => {
   console.error(e);
   process.exit(1);
 });
