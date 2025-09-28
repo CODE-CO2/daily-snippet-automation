@@ -1,14 +1,12 @@
 name: Upload Daily Snippets
-
 on:
   push:
     paths:
-      - "snippets/**"   # snippets 폴더 변경시에만 실행
+      - "snippets/**"
 
 jobs:
   upload:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,22 +16,42 @@ jobs:
         with:
           node-version: "18"
 
-      # (선택) 리포 상태 빠르게 확인하고 싶을 때 유용
-      - name: Debug listing
+      - name: Show repo tree (snippets)
         run: |
-          echo "::group::Repo tree (snippets)"
-          ls -R snippets || true
+          echo "::group::tree snippets"
+          ls -alR snippets || true
           echo "::endgroup::"
 
-      - name: Init npm (no extra deps)
+      # ✅ n8n 웹훅으로 직접 1건 보내보기 (파이프라인 정상 여부 확인)
+      - name: Smoke test to n8n
+        env:
+          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}
+        run: |
+          set -euo pipefail
+          echo "URL=[$DAILY_SNIPPET_URL]"
+          if [ -z "${DAILY_SNIPPET_URL:-}" ]; then echo "❌ URL empty"; exit 1; fi
+
+          NOW=$(date -u +%FT%TZ)
+          BODY=$(jq -nc \
+            --arg email "jeh0224@gachon.ac.kr" \
+            --arg content "n8n smoke test from Actions ($NOW)" \
+            --arg created "$NOW" \
+            --arg title "smoke-$NOW" \
+            '{author_email:$email,content:$content,created_at:$created,source:"github",title:$title}')
+
+          echo "::group::POST n8n"
+          echo "$BODY"
+          curl -i -sS -X POST "$DAILY_SNIPPET_URL" \
+            -H "Content-Type: application/json" \
+            --data "$BODY"
+          echo "::endgroup::"
+
+      # 실제 업로더 실행
+      - name: Init npm
         run: |
           npm init -y >/dev/null 2>&1 || true
 
-      # n8n 웹훅으로 업로드 실행
-      # - scripts/upload-snippets.js 는 DAILY_SNIPPET_URL(필수)만 사용하도록 되어있어야 합니다.
-      #   (만약 스크립트에서 KEY도 필수로 체크한다면 아래 KEY도 주입 그대로 유지)
       - name: Run uploader
         env:
-          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}       # n8n 웹훅 URL (필수)
-          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }} # n8n이 헤더 요구 시 사용, 아니면 스크립트에서 무시
+          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}   # n8n 웹훅
         run: node scripts/upload-snippets.js
