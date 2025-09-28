@@ -1,7 +1,7 @@
 - name: Send Daily Snippet
   env:
-    DAILY_SNIPPET_API_URL: "https://gqfegtdjewnadcmksktg.supabase.co/rest/v1/snippets" # 또는 n8n 웹훅
-    DAILY_SNIPPET_API_TOKEN: ${{ secrets.DAILY_SNIPPET_API_TOKEN }} # Supabase면 service_role/키, n8n이면 필요없으면 제거
+    DAILY_SNIPPET_API_URL: ${{ secrets.DAILY_SNIPPET_API_URL }}
+    DAILY_SNIPPET_API_TOKEN: ${{ secrets.DAILY_SNIPPET_API_TOKEN }}
   run: |
     set -euo pipefail
     echo "URL=[$DAILY_SNIPPET_API_URL]"
@@ -15,7 +15,6 @@
       --arg title "smoke-$DATE" \
       '{author_email:$email,content:$content,created_at:$created,source:"github",title:$title}')
 
-    # 헤더: Supabase면 Authorization/apikey 필요, n8n이면 보통 불필요
     curl -sS -X POST "$DAILY_SNIPPET_API_URL" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $DAILY_SNIPPET_API_TOKEN" \
