@@ -1,12 +1,14 @@
 name: Upload Daily Snippets
+
 on:
   push:
     paths:
-      - "snippets/**"
+      - "snippets/**"   # snippets 폴더 변경시에만 실행
 
 jobs:
   upload:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,12 +18,22 @@ jobs:
         with:
           node-version: "18"
 
-      - name: Init npm
+      # (선택) 리포 상태 빠르게 확인하고 싶을 때 유용
+      - name: Debug listing
+        run: |
+          echo "::group::Repo tree (snippets)"
+          ls -R snippets || true
+          echo "::endgroup::"
+
+      - name: Init npm (no extra deps)
         run: |
           npm init -y >/dev/null 2>&1 || true
 
+      # n8n 웹훅으로 업로드 실행
+      # - scripts/upload-snippets.js 는 DAILY_SNIPPET_URL(필수)만 사용하도록 되어있어야 합니다.
+      #   (만약 스크립트에서 KEY도 필수로 체크한다면 아래 KEY도 주입 그대로 유지)
       - name: Run uploader
         env:
-          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
-          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}
+          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}       # n8n 웹훅 URL (필수)
+          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }} # n8n이 헤더 요구 시 사용, 아니면 스크립트에서 무시
         run: node scripts/upload-snippets.js
