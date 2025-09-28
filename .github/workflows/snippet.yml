@@ -3,7 +3,7 @@ name: Upload Daily Snippets
 on:
   push:
     paths:
-      - "snippets/**"
+      - "snippets/**"   # snippets 폴더 변경시에만 실행
 
 jobs:
   upload:
@@ -18,41 +18,19 @@ jobs:
         with:
           node-version: "18"
 
-      - name: Show repo tree
+      - name: Show repo tree (snippets)
         run: |
           echo "::group::snippets tree"
           ls -alR snippets || true
           echo "::endgroup::"
 
       - name: Init npm
-        run: |
-          npm init -y >/dev/null 2>&1 || true
-
-      - name: Smoke test (optional)
-        if: ${{ false }}  # 필요시 true로 바꿔 1건 테스트
-        env:
-          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}
-          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
-        run: |
-          set -euo pipefail
-          NOW=$(date -u +%FT%TZ)
-          BODY=$(jq -nc \
-            --arg email "jeh0224@gachon.ac.kr" \
-            --arg content "smoke test from Actions ($NOW)" \
-            --arg created "$NOW" \
-            --arg title "smoke-$NOW" \
-            '{user_email:$email, author_email:$email, content:$content, created_at:$created, title:$title, source:"github"}')
-          curl -i -sS -X POST "$DAILY_SNIPPET_URL" \
-            -H "Authorization: Bearer $DAILY_SNIPPET_API_KEY" \
-            -H "X-DS-User-Email: jeh0224@gachon.ac.kr" \
-            -H "Content-Type: application/json" \
-            --data "$BODY"
+        run: npm init -y >/dev/null 2>&1 || true
 
       - name: Run uploader
         env:
           DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}
           DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
-          USER_ID_FIELD: "user_email"       # 백엔드가 기대하는 사용자 식별 필드명
-          IMPERSONATION_HEADER: "X-DS-User-Email"  # 서버가 지원 시 유지, 아니면 제거 가능
+          TEAM_NAME: "7기-2팀"     # 필요 없으면 이 줄 삭제 가능
           DEBUG: "1"
         run: node scripts/upload-snippets.js
