@@ -1,32 +1,23 @@
-name: Upload Daily Snippets
-on:
-  push:
-    paths:
-      - "snippets/**"
+- name: Send Daily Snippet
+  env:
+    DAILY_SNIPPET_API_URL: "https://gqfegtdjewnadcmksktg.supabase.co/rest/v1/snippets" # 또는 n8n 웹훅
+    DAILY_SNIPPET_API_TOKEN: ${{ secrets.DAILY_SNIPPET_API_TOKEN }} # Supabase면 service_role/키, n8n이면 필요없으면 제거
+  run: |
+    set -euo pipefail
+    echo "URL=[$DAILY_SNIPPET_API_URL]"
+    if [ -z "${DAILY_SNIPPET_API_URL:-}" ]; then echo "❌ URL empty"; exit 1; fi
 
-jobs:
-  upload:
-    runs-on: ubuntu-latest
-    concurrency:
-      group: snippets-${{ github.ref }}
-      cancel-in-progress: false
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    DATE=$(date -u +%FT%TZ)
+    BODY=$(jq -nc \
+      --arg email "jeh0224@gachon.ac.kr" \
+      --arg content "자동 업로드 테스트" \
+      --arg created "$DATE" \
+      --arg title "smoke-$DATE" \
+      '{author_email:$email,content:$content,created_at:$created,source:"github",title:$title}')
 
-      - name: Setup Node 18
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18"
-
-      - name: Init npm (no extra deps)
-        run: |
-          npm init -y >/dev/null 2>&1 || true
-
-      - name: Run uploader
-        env:
-          # n8n 사용 중이면 키 필요 없으면 아래 줄 제거 가능
-          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
-          DS_ENDPOINT: "https://n8n.1000.school/webhook/0a43fbad-cc6d-4a5f-8727-b387c27de7c8"
-          # (Supabase 직접일 때는 위 URL을 Supabase REST URL로 교체)
-        run: node scripts/upload-snippets.js
+    # 헤더: Supabase면 Authorization/apikey 필요, n8n이면 보통 불필요
+    curl -sS -X POST "$DAILY_SNIPPET_API_URL" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $DAILY_SNIPPET_API_TOKEN" \
+      -H "apikey: $DAILY_SNIPPET_API_TOKEN" \
+      --data "$BODY"
