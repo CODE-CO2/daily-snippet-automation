@@ -1,126 +1,131 @@
-// scripts/upload-snippets.js
+// scripts/probe-snippet.js
+// 목적: 문서 없는 팀 API에서 "사용자 귀속"을 인식하는 필드/헤더 조합을 탐색
+// 필요 Secrets: DAILY_SNIPPET_URL, DAILY_SNIPPET_API_KEY
+// 실행: node scripts/probe-snippet.js
+
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
 
-// === 환경변수 (Secrets에서 주입) ===
-const API_URL = process.env.DAILY_SNIPPET_URL; // n8n webhook
-if (!API_URL) {
-  console.error("❌ DAILY_SNIPPET_URL is missing");
+const API_URL = process.env.DAILY_SNIPPET_URL;
+const API_KEY = process.env.DAILY_SNIPPET_API_KEY;
+if (!API_URL || !API_KEY) {
+  console.error("❌ DAILY_SNIPPET_URL or DAILY_SNIPPET_API_KEY missing");
   process.exit(1);
 }
 
-// 디버그 스위치 (워크플로우 env에 DEBUG=1 주면 상세 로그)
-const DEBUG = process.env.DEBUG === "1";
-
-// === 레포 구조 ===
-const ROOT = process.cwd();
-const SNIPPETS_DIR = path.join(ROOT, "snippets");
-
-// 팀원 폴더명 → 이메일 매핑 (필요에 맞게 수정)
+// 각 폴더명 → 실제 구글 계정 이메일
 const EMAIL_MAP = {
-  jieun: "jieun@example.com",
   eunho: "jeh0224@gachon.ac.kr",
+  jieun: "jieun@example.com",
   siwan: "siwan@example.com",
   gyubi: "gyubi@example.com",
 };
 
-// 파일의 마지막 커밋 AuthorDate(ISO)
-function gitAuthorISODate(filePath) {
-  try {
-    const out = execSync(`git log -1 --pretty=format:%aI -- "${filePath}"`, {
-      encoding: "utf8",
-    }).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
+// 후보 필드/헤더
+const FIELD_CANDIDATES = ["user_email", "email", "google_email", "account_email", "userId", "user_id"];
+const HEADER_CANDIDATES = ["X-User-Email", "X-DS-User-Email", "X-Impersonate-User", "X-Act-As-User", null];
+
+function kstIsoMidnight(ymd) { // 'YYYY-MM-DD' -> 'YYYY-MM-DDT00:00:00+09:00'
+  return `${ymd}T00:00:00+09:00`;
 }
 
-// n8n으로 전송
-async function uploadSnippet(row) {
-  if (DEBUG) {
-    console.log("[DEBUG] POST", API_URL);
-    console.log("[DEBUG] BODY", JSON.stringify(row));
-  }
+function ymdFromName(name) {
+  const m = name.match(/(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
+async function postOnce({ ownerEmail, fieldName, headerName, title, content, created_at }) {
+  const headers = {
+    "Authorization": `Bearer ${API_KEY}`,
+    "Content-Type": "application/json",
+  };
+  if (headerName) headers[headerName] = ownerEmail;
+
+  // 바디에는 모든 후보 필드 중 하나만 “주요 식별자”로, 그리고 호환용으로 author_email도 함께 보냄
+  const body = {
+    [fieldName]: ownerEmail,
+    author_email: ownerEmail,
+    title,
+    content,
+    created_at,
+    source: "github-probe",
+  };
+
   const res = await fetch(API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(row),
+    headers,
+    body: JSON.stringify(body),
   });
-  const text = await res.text(); // n8n은 빈 본문/텍스트일 수 있음
-  if (DEBUG) console.log("[DEBUG] RESP", res.status, res.statusText, text);
-  if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}\n${text}`);
-  try { return JSON.parse(text); } catch { return { ok: true, text }; }
-}
 
-function inferTitleFromName(name) {
-  const base = path.basename(name, path.extname(name));
-  return `Daily note ${base}`;
+  const text = await res.text();
+  return { status: res.status, statusText: res.statusText, text };
 }
 
 (async function main() {
+  const ROOT = process.cwd();
+  const SNIPPETS_DIR = path.join(ROOT, "snippets");
   if (!fs.existsSync(SNIPPETS_DIR)) {
-    console.log("No snippets/ directory. Skip.");
-    return;
+    console.error("❌ snippets/ not found");
+    process.exit(2);
   }
 
-  let uploaded = 0;
-  let candidates = 0;
+  // candidates: snippets/<author>/<file> 중 1개씩만 대표로 사용
+  const reps = [];
+  for (const author of Object.keys(EMAIL_MAP)) {
+    const dir = path.join(SNIPPETS_DIR, author);
+    if (!fs.existsSync(dir)) continue;
+    const files = fs.readdirSync(dir).filter(n => /\.(md|txt|markdown)$/i.test(n));
+    if (files.length === 0) continue;
+    reps.push({ author, file: files[0] });
+  }
+  if (reps.length === 0) {
+    console.error("❌ No sample files found under snippets/<author>");
+    process.exit(3);
+  }
 
-  // 팀원 폴더 모음
-  const authors = fs
-    .readdirSync(SNIPPETS_DIR, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name);
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const results = [];
 
-  if (DEBUG) console.log("[DEBUG] authors(found dirs):", authors);
+  for (const { author, file } of reps) {
+    const email = EMAIL_MAP[author];
+    const full = path.join(SNIPPETS_DIR, author, file);
+    const content = fs.readFileSync(full, "utf8").slice(0, 500);
+    const ymd = ymdFromName(file);
+    const created_at = ymd ? kstIsoMidnight(ymd) : new Date().toISOString();
 
-  for (const authorDir of authors) {
-    const email = EMAIL_MAP[authorDir];
-    if (!email) {
-      console.warn(`⚠️ Unknown author dir: ${authorDir}. Skip.`);
-      continue;
-    }
+    for (const fieldName of FIELD_CANDIDATES) {
+      for (const headerName of HEADER_CANDIDATES) {
+        const tag = `PROBE-${author}-${fieldName}-${headerName || "nohdr"}-${ts}`;
+        const title = `🧪 ${tag}`;
+        const preview = (content || "").split("\n").slice(0, 3).join(" | ");
 
-    const dirPath = path.join(SNIPPETS_DIR, authorDir);
-    const files = fs
-      .readdirSync(dirPath, { withFileTypes: true })
-      .filter((f) => f.isFile())
-      .map((f) => f.name)
-      .filter((name) => /\.(md|txt|markdown)$/i.test(name));
-
-    if (DEBUG) console.log("[DEBUG] author:", authorDir, "email:", email, "files:", files);
-
-    for (const fname of files) {
-      const full = path.join(dirPath, fname);
-      const content = fs.readFileSync(full, "utf8");
-      const createdAt = gitAuthorISODate(full) || new Date().toISOString();
-      const title = inferTitleFromName(fname);
-
-      const row = {
-        author_email: email,
-        content,
-        created_at: createdAt,
-        source: "github",
-        title,
-      };
-
-      candidates += 1;
-      console.log(`↗️ Uploading ${authorDir}/${fname} as ${email} @ ${createdAt}`);
-
-      try {
-        const out = await uploadSnippet(row);
-        uploaded += 1;
-        console.log("✅ Uploaded via n8n:", out);
-      } catch (err) {
-        console.error(`❌ Failed ${authorDir}/${fname}: ${err.message}`);
+        try {
+          const r = await postOnce({
+            ownerEmail: email,
+            fieldName,
+            headerName,
+            title,
+            content: `(${tag}) ${preview}`,
+            created_at,
+          });
+          console.log(`${author} | ${fieldName} | ${headerName || "-"} => ${r.status} ${r.statusText}`);
+          results.push({ author, fieldName, headerName, status: r.status, statusText: r.statusText, titleTag: tag });
+        } catch (e) {
+          console.log(`${author} | ${fieldName} | ${headerName || "-"} => ERROR ${e.message}`);
+          results.push({ author, fieldName, headerName, error: e.message, titleTag: tag });
+        }
       }
     }
   }
 
-  console.log(`Done. Candidates=${candidates}, Uploaded=${uploaded}.`);
-})().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+  // 간단한 표 출력
+  console.log("\n=== PROBE SUMMARY (find 2xx then search that tag in UI) ===");
+  for (const r of results) {
+    if (r.error) {
+      console.log(`✗ ${r.author} | ${r.fieldName} | ${r.headerName || "-"} | ERROR: ${r.error}`);
+    } else {
+      const ok = r.status >= 200 && r.status < 300 ? "✓" : "✗";
+      console.log(`${ok} ${r.author} | ${r.fieldName} | ${r.headerName || "-"} | ${r.status} | ${r.titleTag}`);
+    }
+  }
+})();
