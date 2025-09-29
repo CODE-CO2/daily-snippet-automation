@@ -41,7 +41,7 @@ jobs:
           DEBUG: "0"
           FORCE_FULL: ${{ github.event.inputs.force_full == 'true' && '1' || '0' }}
         run: |
-          node scripts/upload_snippets.js
+          node scripts/upload-snippets.js
 
       - name: Save cache (.snippet_state.json)
         if: always()
