@@ -23,7 +23,7 @@ const SNIPPETS_DIR = path.join(ROOT, "snippets");
 const EMAIL_MAP = {
   eunho: "jeh0224@gachon.ac.kr",
   jieun: "wldms4849@gachon.ac.kr",
-  siwan: "siwan@example.com",
+  siwan: "gamja5356@gachon.ac.kr",
   gyubi: "guebi1220@gachon.ac.kr",
 };
 
