@@ -24,7 +24,7 @@ const EMAIL_MAP = {
   eunho: "jeh0224@gachon.ac.kr",
   jieun: "wldms4849@gachon.ac.kr",
   siwan: "gamja5356@gachon.ac.kr",
-  gyubi: "guebi1220@gachon.ac.kr",
+  guebi: "guebi1220@gachon.ac.kr",
 };
 
 function ymdFromFilename(name) {
