@@ -1,51 +1,59 @@
-name: Daily Snippet Uploader
+# .github/workflows/snippet.yml
+name: Upload Daily Snippets
 
 on:
+  # ✅ 매일 KST 08:00에 실행 (UTC 기준으로 전날 23:00)
   schedule:
-    # 매일 KST 08:00 == UTC 23:00 (전날)
     - cron: "0 23 * * *"
+  # 수동 실행(테스트/임시 업로드)
   workflow_dispatch:
     inputs:
-      force_full:
-        description: "Ignore cache and upload all (true/false)"
+      target_date:
+        description: "YYYY-MM-DD (미입력 시 KST 오늘)"
         required: false
-        default: "false"
+        type: string
+      author_only:
+        description: "특정 author 폴더만(eunho/jieun/siwan/gyubi)"
+        required: false
+        type: string
+      dry_run:
+        description: "드라이런(전송 안 함)"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   upload:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # .snippet_state.json 캐시 복구(변경분만 업로드 핵심)
-      - name: Restore cache (.snippet_state.json)
-        uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          path: .snippet_state.json
-          key: snippet-state-${{ runner.os }}-${{ github.ref }}
-          restore-keys: |
-            snippet-state-${{ runner.os }}-
+          node-version: "18"
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
+      - name: Init npm
+        run: npm init -y >/dev/null 2>&1 || true
+
+      # KST 기준 오늘 날짜 계산 (수동 실행에서 미입력 시)
+      - name: Compute default TARGET_DATE (KST)
+        id: kst
+        run: |
+          if [ -z "${{ github.event.inputs.target_date }}" ]; then
+            TD=$(TZ=Asia/Seoul date +%F)
+            echo "target_date=$TD" >> $GITHUB_OUTPUT
+          else
+            echo "target_date=${{ github.event.inputs.target_date }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Run uploader
         env:
-          DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}
+          DAILY_SNIPPET_URL:     ${{ secrets.DAILY_SNIPPET_URL }}
           DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
-          API_ID: ${{ secrets.API_ID }}
-          TEAM_NAME: ${{ secrets.TEAM_NAME }}
-          DEBUG: "0"
-          FORCE_FULL: ${{ github.event.inputs.force_full == 'true' && '1' || '0' }}
-        run: |
-          node scripts/upload-snippets.js
-
-      - name: Save cache (.snippet_state.json)
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: .snippet_state.json
-          key: snippet-state-${{ runner.os }}-${{ github.ref }}-${{ github.run_id }}
+          API_ID:                ${{ secrets.API_ID }}         # 별도 시크릿
+          TEAM_NAME:             "7기-2팀"
+          TARGET_DATE:           ${{ steps.kst.outputs.target_date }}
+          AUTHOR_ONLY:           ${{ github.event.inputs.author_only }}
+          DRY_RUN:               ${{ github.event.inputs.dry_run && '1' || '' }}
+          DEBUG:                 "1"
+        run: node scripts/upload-snippets.js
