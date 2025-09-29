@@ -1,23 +1,51 @@
-name: Upload Daily Snippets
+name: Daily Snippet Uploader
 
 on:
-  push:
-    paths: ["snippets/**"]
+  schedule:
+    # 매일 KST 08:00 == UTC 23:00 (전날)
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+    inputs:
+      force_full:
+        description: "Ignore cache and upload all (true/false)"
+        required: false
+        default: "false"
 
 jobs:
   upload:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "18" }
-      - run: npm init -y >/dev/null 2>&1 || true
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # .snippet_state.json 캐시 복구(변경분만 업로드 핵심)
+      - name: Restore cache (.snippet_state.json)
+        uses: actions/cache@v4
+        with:
+          path: .snippet_state.json
+          key: snippet-state-${{ runner.os }}-${{ github.ref }}
+          restore-keys: |
+            snippet-state-${{ runner.os }}-
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Run uploader
         env:
           DAILY_SNIPPET_URL: ${{ secrets.DAILY_SNIPPET_URL }}
-          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}   # Authorization용
-          API_ID: ${{ secrets.DAILY_SNIPPET_API_KEY }}                  # ← 본문에 들어갈 api_id (요청 규격상 필요)
-          TEAM_NAME: "7기-2팀"
-          DEBUG: "1"
-        run: node scripts/upload-snippets.js
+          DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
+          API_ID: ${{ secrets.API_ID }}
+          TEAM_NAME: ${{ secrets.TEAM_NAME }}
+          DEBUG: "0"
+          FORCE_FULL: ${{ github.event.inputs.force_full == 'true' && '1' || '0' }}
+        run: |
+          node scripts/upload_snippets.js
+
+      - name: Save cache (.snippet_state.json)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .snippet_state.json
+          key: snippet-state-${{ runner.os }}-${{ github.ref }}-${{ github.run_id }}
