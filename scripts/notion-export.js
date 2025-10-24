@@ -18,7 +18,14 @@ if (!TARGET_DATE) {
   process.exit(1);
 }
 
-const EMAIL_TO_FOLDER = JSON.parse(AUTHOR_MAP_JSON); // {email: "eunho", ...}
+// notion-export.js
+const EMAIL_TO_FOLDER = {
+  "jeh0224@gachon.ac.kr": "eunho",
+  "wldms4849@gachon.ac.kr": "jieun",
+  "gamja5356@gachon.ac.kr": "siwan",
+  "guebi1220@gachon.ac.kr": "guebi",
+};
+
 const notion = new Client({ auth: NOTION_TOKEN });
 
 const ROOT = process.cwd();
