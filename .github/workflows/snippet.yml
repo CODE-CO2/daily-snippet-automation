@@ -1,11 +1,9 @@
-# .github/workflows/snippet.yml
 name: Upload Daily Snippets
 
 on:
-  # ✅ 매일 KST 08:00에 실행 (UTC 기준으로 전날 23:00)
+  # 매일 KST 08:00 (UTC 23:00)
   schedule:
     - cron: "0 23 * * *"
-  # 수동 실행(테스트/임시 업로드)
   workflow_dispatch:
     inputs:
       target_date:
@@ -25,6 +23,9 @@ on:
 jobs:
   upload:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # notion-export가 파일 생성 → 커밋할 수도 있을 때 필요(선택)
+
     steps:
       - uses: actions/checkout@v4
 
@@ -35,7 +36,10 @@ jobs:
       - name: Init npm
         run: npm init -y >/dev/null 2>&1 || true
 
-      # KST 기준 오늘 날짜 계산 (수동 실행에서 미입력 시)
+      - name: Install deps
+        run: npm install @notionhq/client
+
+      # KST 기준 TARGET_DATE 계산
       - name: Compute default TARGET_DATE (KST)
         id: kst
         run: |
@@ -46,14 +50,41 @@ jobs:
             echo "target_date=${{ github.event.inputs.target_date }}" >> $GITHUB_OUTPUT
           fi
 
+      # 🔹 1) Notion → 파일 생성 (snippets/<folder>/<YYYY-MM-DD>.txt)
+      - name: Export from Notion to files
+        env:
+          NOTION_TOKEN:       ${{ secrets.NOTION_TOKEN }}
+          NOTION_DB_ID:       ${{ secrets.NOTION_DB_ID }}
+          NOTION_AUTHOR_MAP:  ${{ secrets.NOTION_AUTHOR_MAP }}   # JSON 문자열
+          TARGET_DATE:        ${{ steps.kst.outputs.target_date }}
+        run: node scripts/notion-export.js
+
+      # (선택) Notion에서 새로 생성된 파일이 있으면 커밋
+      - name: Commit generated files (if any)
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "chore: export snippets from Notion for ${{ steps.kst.outputs.target_date }}"
+            git push
+          else
+            echo "No new files to commit."
+          fi
+
+      # 🔹 2) 업로더 실행 → Daily Snippet 서버로 POST + Notion Posted=true 업데이트
       - name: Run uploader
         env:
           DAILY_SNIPPET_URL:     ${{ secrets.DAILY_SNIPPET_URL }}
           DAILY_SNIPPET_API_KEY: ${{ secrets.DAILY_SNIPPET_API_KEY }}
-          API_ID:                ${{ secrets.API_ID }}         # 별도 시크릿
+          API_ID:                ${{ secrets.API_ID }}   # (서버에서 쓰면 유지)
           TEAM_NAME:             "7기-2팀"
           TARGET_DATE:           ${{ steps.kst.outputs.target_date }}
           AUTHOR_ONLY:           ${{ github.event.inputs.author_only }}
           DRY_RUN:               ${{ github.event.inputs.dry_run && '1' || '' }}
           DEBUG:                 "1"
+
+          # Notion 업데이트용
+          NOTION_TOKEN:          ${{ secrets.NOTION_TOKEN }}
+          NOTION_DB_ID:          ${{ secrets.NOTION_DB_ID }}
         run: node scripts/upload-snippets.js
