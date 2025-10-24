@@ -1,16 +1,19 @@
-// scripts/upload-snippets.js  (수정본: Notion 업데이트 포함)
+// scripts/upload-snippets.js
+// snippets/<folder>/<YYYY-MM-DD>.* 를 읽어 Daily Snippet 서버로 POST.
+// 성공 시 .cache/notion-map.json 을 참고해 해당 Notion 페이지들에 Posted=true + Posted At 기록.
+
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
 const { Client } = require("@notionhq/client");
 
-// ---- API (Daily Snippet)
+// ----- Daily Snippet API
 const API_URL = process.env.DAILY_SNIPPET_URL;
 const API_KEY = process.env.DAILY_SNIPPET_API_KEY;
 const TEAM_NAME = process.env.TEAM_NAME || "7기-2팀";
 const DEBUG = process.env.DEBUG === "1";
 
-// ---- Notion (for Posted=true update)
+// ----- Notion(optional for Posted=true update)
 const NOTION_TOKEN = process.env.NOTION_TOKEN || "";
 const NOTION_DB_ID = process.env.NOTION_DB_ID || "";
 const notion = NOTION_TOKEN ? new Client({ auth: NOTION_TOKEN }) : null;
@@ -22,7 +25,7 @@ const ROOT = process.cwd();
 const SNIPPETS_DIR = path.join(ROOT, "snippets");
 const CACHE_FILE = path.join(ROOT, ".cache", "notion-map.json");
 
-// 폴더명 ↔ 이메일 (레포 내 하드코딩 맵)
+// ✅ 레포에 있는 매핑 유지(폴더 → 이메일)
 const EMAIL_MAP = {
   eunho: "jeh0224@gachon.ac.kr",
   jieun: "wldms4849@gachon.ac.kr",
@@ -39,7 +42,9 @@ function gitAuthorISODate(p) {
     return execSync(`git log -1 --pretty=format:%aI -- "${p}"`, { encoding: "utf8" }).trim() || null;
   } catch { return null; }
 }
-function isoToYmd(iso) { return (iso || "").split("T")[0] || null; }
+function isoToYmd(iso) {
+  return (iso || "").split("T")[0] || null;
+}
 
 async function postSnippet(payload) {
   const headers = { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" };
@@ -55,10 +60,8 @@ async function postSnippet(payload) {
   try { return JSON.parse(text); } catch { return { ok: true, text }; }
 }
 
-// --- Notion Posted=true 업데이트
 async function markNotionPosted(email, ymd) {
-  if (!notion) return; // 노션 토큰 없으면 skip
-  // 캐시 파일에서 해당 key 찾기
+  if (!notion) return;
   let map = {};
   if (fs.existsSync(CACHE_FILE)) {
     try { map = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")); } catch { map = {}; }
@@ -69,6 +72,7 @@ async function markNotionPosted(email, ymd) {
     if (DEBUG) console.log(`[DEBUG] No Notion pageIds for ${key}`);
     return;
   }
+
   const now = new Date();
   const kst = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
   const kstISO = new Date(kst.getTime() - kst.getTimezoneOffset() * 60000).toISOString();
@@ -79,8 +83,7 @@ async function markNotionPosted(email, ymd) {
         page_id: pid,
         properties: {
           Posted: { checkbox: true },
-          // Posted At 필드가 DB에 있을 때만 반영 (없어도 에러 안 나게)
-          "Posted At": { date: { start: kstISO } },
+          "Posted At": { date: { start: kstISO } }, // 필드 없으면 무시됨
         },
       });
       if (DEBUG) console.log(`[DEBUG] Notion updated Posted=true (${pid})`);
@@ -99,24 +102,29 @@ async function markNotionPosted(email, ymd) {
   let candidates = 0, uploaded = 0;
 
   const authors = fs.readdirSync(SNIPPETS_DIR, { withFileTypes: true })
-                    .filter(d => d.isDirectory()).map(d => d.name);
+                    .filter((d) => d.isDirectory())
+                    .map((d) => d.name);
 
   for (const author of authors) {
     const userEmail = EMAIL_MAP[author];
-    if (!userEmail) { console.warn(`⚠️ Skip: unknown author "${author}"`); continue; }
+    if (!userEmail) {
+      console.warn(`⚠️ Skip: unknown author "${author}"`);
+      continue;
+    }
 
     const dir = path.join(SNIPPETS_DIR, author);
-    const files = fs.readdirSync(dir).filter(n => /\.(md|txt|markdown)$/i.test(n));
+    const files = fs.readdirSync(dir).filter((n) => /\.(md|markdown|txt)$/i.test(n));
 
     for (const fname of files) {
       const full = path.join(dir, fname);
       const content = fs.readFileSync(full, "utf8").trim();
-      const ymdFromName = ymdFromFilename(fname);
+
+      const ymdName = ymdFromFilename(fname);
       const createdIso = gitAuthorISODate(full) || new Date().toISOString();
-      const snippet_date = ymdFromName || isoToYmd(createdIso) || new Date().toISOString().slice(0, 10);
+      const snippet_date = ymdName || isoToYmd(createdIso) || new Date().toISOString().slice(0, 10);
 
       const payload = {
-        api_id: API_KEY,              // 서버가 api_id 필드를 요구 → API_KEY 재사용
+        api_id: API_KEY,           // 서버 스펙: api_id 필드 요구 → API_KEY 재사용
         user_email: userEmail,
         snippet_date,
         content,
@@ -130,7 +138,6 @@ async function markNotionPosted(email, ymd) {
         uploaded++;
         console.log("✅ Uploaded:", out);
 
-        // 업로드 성공 시 Notion 페이지들에 Posted=true 반영
         await markNotionPosted(userEmail, snippet_date);
       } catch (e) {
         console.error(`❌ Failed ${author}/${fname}: ${e.message}`);
@@ -141,4 +148,7 @@ async function markNotionPosted(email, ymd) {
   console.log(`Done. Candidates=${candidates}, Uploaded=${uploaded}.`);
   if (candidates === 0) process.exit(2);
   if (uploaded === 0) process.exit(3);
-})().catch(e => { console.error(e); process.exit(1); });
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
