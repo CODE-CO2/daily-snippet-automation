@@ -36,9 +36,13 @@ jobs:
       - name: Init npm
         run: npm init -y >/dev/null 2>&1 || true
 
-     - name: Install deps (@notionhq/client)
-       run: npm install @notionhq/client
+      # 🔧 CJS 호환 버전 고정
+      - name: Install deps (@notionhq/client v2)
+        run: npm install @notionhq/client@2
 
+      # (선택) 설치 버전 확인용
+      - name: Show Notion SDK version
+        run: node -e "console.log(require('@notionhq/client/package.json').version)"
 
       - name: Compute default TARGET_DATE (KST)
         id: kst
