@@ -36,8 +36,9 @@ jobs:
       - name: Init npm
         run: npm init -y >/dev/null 2>&1 || true
 
-      - name: Install deps (@notionhq/client)
-        run: npm install @notionhq/client
+     - name: Install deps (@notionhq/client)
+  run: npm install @notionhq/client
+
 
       - name: Compute default TARGET_DATE (KST)
         id: kst
