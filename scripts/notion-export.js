@@ -1,13 +1,15 @@
 // scripts/notion-export.js
-// Notion DB에서 TARGET_DATE(YYYY-MM-DD) + Posted!=true 인 페이지를 읽어
-// snippets/<folder>/<YYYY-MM-DD>.txt 파일을 생성하고,
-// .cache/notion-map.json 에 (email|date) -> pageId[] 매핑을 저장한다.
+// Notion DB에서 TARGET_DATE(YYYY-MM-DD)이고 Posted!=true 인 페이지를 모아
+// snippets/<folder>/<YYYY-MM-DD>.txt 파일을 만든다.
+// 또한 .cache/notion-map.json 에 (email|date) -> pageId[] 를 기록 (업로드 후 Posted=true 처리용).
+
+"use strict";
 
 const fs = require("fs");
 const path = require("path");
-const { Client } = require("@notionhq/client");
+const { Client } = require("@notionhq/client"); // ✅ 올바른 import (중복 선언 금지)
 
-// ----- ENV
+// ------------------ ENV ------------------
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const NOTION_DB_ID = process.env.NOTION_DB_ID;
 const TARGET_DATE = (process.env.TARGET_DATE || "").slice(0, 10); // YYYY-MM-DD
@@ -21,30 +23,30 @@ if (!TARGET_DATE) {
   process.exit(1);
 }
 
-// ✅ 레포의 업로더(snippets.js)와 동일하게 유지: "폴더 → 이메일"
+const notion = new Client({ auth: NOTION_TOKEN }); // ✅ 단 한 번만 생성
+
+// 레포의 업로더와 동일한 매핑(폴더 -> 이메일)
 const FOLDER_TO_EMAIL = {
   eunho: "jeh0224@gachon.ac.kr",
   jieun: "wldms4849@gachon.ac.kr",
   siwan: "gamja5356@gachon.ac.kr",
   guebi: "guebi1220@gachon.ac.kr",
 };
-// 이 파일에서는 "이메일 → 폴더"가 필요하므로 역매핑 생성
+// 여기서는 이메일 -> 폴더 필요
 const EMAIL_TO_FOLDER = Object.fromEntries(
   Object.entries(FOLDER_TO_EMAIL).map(([folder, email]) => [email, folder])
 );
-
-const notion = new Client({ auth: NOTION_TOKEN });
 
 const ROOT = process.cwd();
 const SNIPPETS_DIR = path.join(ROOT, "snippets");
 const CACHE_DIR = path.join(ROOT, ".cache");
 const MAP_FILE = path.join(CACHE_DIR, "notion-map.json");
 
+// ------------------ helpers ------------------
 function ensureDir(p) {
   if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
 }
 
-// 블록 → 텍스트 (가장 많이 쓰는 타입 위주, 필요 시 확장 가능)
 function blockToPlain(b) {
   const t = b.type;
   const data = b[t] || {};
@@ -52,31 +54,22 @@ function blockToPlain(b) {
   const text = rt.map((r) => r.plain_text || "").join("");
 
   switch (t) {
-    case "heading_1":
-      return `# ${text}`;
-    case "heading_2":
-      return `## ${text}`;
-    case "heading_3":
-      return `### ${text}`;
-    case "bulleted_list_item":
-      return `- ${text}`;
-    case "numbered_list_item":
-      return `1. ${text}`;
-    case "to_do":
-      return `${data.checked ? "[x]" : "[ ]"} ${text}`;
-    case "quote":
-      return `> ${text}`;
-    case "callout":
-      return `${text}`;
+    case "heading_1": return `# ${text}`;
+    case "heading_2": return `## ${text}`;
+    case "heading_3": return `### ${text}`;
+    case "bulleted_list_item": return `- ${text}`;
+    case "numbered_list_item": return `1. ${text}`;
+    case "to_do": return `${data.checked ? "[x]" : "[ ]"} ${text}`;
+    case "quote": return `> ${text}`;
+    case "callout": return `${text}`;
     case "paragraph":
-    default:
-      return text;
+    default: return text;
   }
 }
 
 async function readBlocksAsText(pageId) {
   const lines = [];
-  let cursor = undefined;
+  let cursor;
   do {
     const resp = await notion.blocks.children.list({
       block_id: pageId,
@@ -93,7 +86,7 @@ async function readBlocksAsText(pageId) {
 }
 
 async function queryPagesForDate(ymd) {
-  // Date == TARGET_DATE  AND (Posted == false OR empty)
+  // Date == ymd AND (Posted == false OR empty)
   const filter = {
     and: [
       { property: "Date", date: { on_or_after: ymd } },
@@ -122,6 +115,7 @@ async function queryPagesForDate(ymd) {
   return pages;
 }
 
+// ------------------ main ------------------
 (async function main() {
   ensureDir(SNIPPETS_DIR);
   ensureDir(CACHE_DIR);
@@ -134,8 +128,8 @@ async function queryPagesForDate(ymd) {
     return;
   }
 
-  // email|date 별로 본문 합치기
-  const grouped = {}; // key: `${email}|${date}` → { texts: [], pageIds: [] }
+  // email|date 그룹화
+  const grouped = {}; // key: `${email}|${date}` → { texts:[], pageIds:[] }
 
   for (const p of pages) {
     const props = p.properties || {};
@@ -149,7 +143,6 @@ async function queryPagesForDate(ymd) {
       continue;
     }
 
-    // 본문 읽기
     const text = await readBlocksAsText(p.id);
     const key = `${email}|${date}`;
     if (!grouped[key]) grouped[key] = { texts: [], pageIds: [] };
@@ -163,7 +156,7 @@ async function queryPagesForDate(ymd) {
     const [email, date] = key.split("|");
     const folder = EMAIL_TO_FOLDER[email];
     if (!folder) {
-      console.warn(`⚠️ Unknown email → folder mapping: ${email}`);
+      console.warn(`⚠️ Unknown email → folder: ${email}`);
       continue;
     }
 
@@ -171,7 +164,6 @@ async function queryPagesForDate(ymd) {
     ensureDir(dir);
     const file = path.join(dir, `${date}.txt`);
 
-    // 기존 파일이 있으면 유지(덮어쓰지 않음)
     if (fs.existsSync(file)) {
       console.log(`[notion-export] Exists, skip: ${file}`);
     } else {
