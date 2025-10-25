@@ -33,7 +33,7 @@ if (
   typeof notionClient.databases.query !== "function"
 ) {
   console.error("❌ Notion client is invalid: databases.query not found");
-  console.error("   @notionhq/client version:",
+  console.error("    @notionhq/client version:",
     (() => {
       try { return require("@notionhq/client/package.json").version; }
       catch { return "unknown"; }
@@ -101,11 +101,16 @@ async function queryPagesForDate(ymd) {
     and: [
       { property: "Date", date: { on_or_after: ymd } },
       { property: "Date", date: { on_or_before: ymd } },
-      { or: [
-          { property: "Posted", checkbox: { equals: false } },
-          { property: "Posted", checkbox: { is_empty: true } },
-        ],
-      },
+      // ❌ [수정 전]: 복잡한 or 조건이 validation_error를 유발했습니다.
+      // { or: [
+      //     { property: "Posted", checkbox: { equals: false } },
+      //     { property: "Posted", checkbox: { is_empty: true } },
+      //   ],
+      // },
+
+      // ✅ [수정 후]: Posted=false 조건 하나로 단순화합니다.
+      // Notion API에서 체크 해제(false)와 빈 값(empty)을 모두 포함하는 경우가 많습니다.
+      { property: "Posted", checkbox: { equals: false } }, 
     ],
   };
 
