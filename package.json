@@ -8,8 +8,8 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
     "@notionhq/client": "^2.3.0"
-  }
+  },
+  "description": ""
 }
