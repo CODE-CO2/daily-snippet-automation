@@ -58,19 +58,17 @@ const MAP_FILE = path.join(CACHE_DIR, "notion-map.json");
 
 // ---------- helpers ----------
 
-// ⭐⭐⭐ ensureDir 함수 정의 복구 (ReferenceError 해결) ⭐⭐⭐
+// ensureDir 함수 정의 복구
 function ensureDir(p) { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
 
 
 /**
  * Notion 블록 객체에서 텍스트를 추출하고 마크다운 형식으로 변환합니다.
- * (본문 추출 누락 문제 해결 로직 포함)
  */
 function blockToPlain(b) {
   const t = b.type;
   const data = b[t] || {};
   
-  // 텍스트는 기본적으로 rich_text 배열에 있습니다.
   const rt = data.rich_text || [];
   let text = rt.map(r => r.plain_text || "").join("");
 
@@ -103,7 +101,6 @@ function blockToPlain(b) {
       return `[UNSUPPORTED BLOCK TYPE: ${t}]`;
 
     default: 
-      // paragraph 등의 기본 텍스트 블록 처리
       return text;
   }
 }
@@ -116,9 +113,7 @@ async function readBlocksAsText(pageId) {
       block_id: pageId, page_size: 100, start_cursor: cursor,
     });
     for (const b of resp.results) {
-      // 컨테이너 블록 처리는 복잡하므로, 텍스트가 있는 블록만 집중적으로 처리합니다.
       if (b.has_children && !['to_do', 'bulleted_list_item', 'numbered_list_item'].includes(b.type)) {
-          // 토글 블록 등은 여기서 텍스트 추출을 생략하고 하위 블록은 무시
       }
       
       const line = blockToPlain(b);
@@ -135,7 +130,6 @@ async function queryPagesForDate(ymd) {
     and: [
       { property: "Date", date: { on_or_after: ymd } },
       { property: "Date", date: { on_or_before: ymd } },
-      // 400 validation_error 해결 로직 적용
       { property: "Posted", checkbox: { equals: false } }, 
     ],
   };
@@ -157,7 +151,6 @@ async function queryPagesForDate(ymd) {
 
 // ---------- main ----------
 (async function main() {
-  // ⭐ ensureDir 복구 후 정상 실행될 것입니다.
   ensureDir(SNIPPETS_DIR);
   ensureDir(CACHE_DIR);
 
@@ -184,13 +177,27 @@ async function queryPagesForDate(ymd) {
     }
 
     const body = await readBlocksAsText(p.id);
+    
+    // ⭐⭐ 날짜/이메일 중복 제거 필터링 로직 추가 ⭐⭐
+    let cleanedBody = body;
+    // 'Daily Snippet - YYYY-MM-DD - email@address.com' 패턴을 찾는 정규식
+    // 날짜와 이메일은 변수로 받아 동적으로 만듭니다.
+    const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`^Daily\\s+Snippet\\s+-\\s+${date}\\s+-\\s+${escapedEmail}\\s*\n?`);
+    
+    // 첫 번째 줄이 해당 패턴과 일치하면 제거합니다.
+    if (body.match(regex)) {
+        cleanedBody = body.replace(regex, '').trim();
+    }
+    // ⭐⭐ 필터링 로직 끝 ⭐⭐
+    
     const key = `${email}|${date}`;
     if (!grouped[key]) grouped[key] = { texts: [], pageIds: [] };
     
-    if (body) {
-        grouped[key].texts.push(body);
+    if (cleanedBody) { // 필터링된 내용 사용
+        grouped[key].texts.push(cleanedBody);
     } else {
-        console.warn(`⚠️ Empty body for page ID: ${p.id}`);
+        console.warn(`⚠️ Empty body after filtering for page ID: ${p.id}`);
     }
     grouped[key].pageIds.push(p.id);
   }
@@ -215,8 +222,7 @@ async function queryPagesForDate(ymd) {
          continue; 
       }
       
-      // ⭐⭐⭐ 최종 수정된 부분: 순수 본문(merged)만 파일에 기록합니다. ⭐⭐⭐
-      // 이전에 파일에 제목을 명시적으로 추가하던 로직을 제거하여 중복을 방지합니다.
+      // 순수 본문(merged)만 파일에 기록합니다. (이중 기록 제거)
       const content = merged;
       
       fs.writeFileSync(file, content, "utf8");
